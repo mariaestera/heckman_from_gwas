@@ -1,6 +1,48 @@
 import numpy as np 
 from scipy.stats import norm
 
+def simulate_block_ar_correlation_matrix(d, k, phi_low=0.3, phi_high=0.9, rng=None):
+    """
+    Simulate a block-diagonal correlation matrix where each block follows
+    an AR(1) structure R_ij = phi^|i-j|, with phi drawn independently per block
+    from Uniform(phi_low, phi_high).
+
+    Parameters
+    ----------
+    d : int
+        Total number of variables (SNPs).
+    k : int
+        Number of blocks.
+    phi_low, phi_high : float
+        Range for sampling the AR(1) coefficient per block.
+    rng : np.random.Generator, optional
+
+    Returns
+    -------
+    R : np.ndarray, shape (d, d)
+        Block-diagonal correlation matrix.
+    """
+    rng = rng or np.random.default_rng()
+
+    # split d variables into k blocks as evenly as possible
+    block_sizes = np.diff(np.linspace(0, d, k + 1).astype(int))
+
+    R = np.zeros((d, d))
+    start = 0
+    for size in block_sizes:
+        end = start + size
+
+        # sample one AR(1) coefficient for this block
+        phi = rng.uniform(phi_low, phi_high)
+
+        # build AR(1) block: R_ij = phi^|i-j|
+        idx = np.arange(size)
+        block = phi ** np.abs(idx[:, None] - idx[None, :])
+
+        R[start:end, start:end] = block
+        start = end
+
+    return R
 
 def simulate_block_correlation_matrix(d, k, corr):
     """
@@ -66,7 +108,7 @@ def beta_heckman(d, R, pi0, snr, rng = None):
     
     beta = np.sqrt(h2/v) * beta_raw
 
-    return beta
+    return beta, 1-h2
 
 def heckman_outcome(X, beta_s, beta_y, sigma2_s, sigma2_y, p_sel, rho, rng = None):
     
