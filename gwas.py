@@ -8,12 +8,14 @@ def gwas_linear(X, y, covariates=None):
     of X) separately, fits y ~ snp (+ covariates) and returns the z-score
     for the SNP effect.
 
+    Samples with NaN in y are dropped before fitting.
+
     Parameters
     ----------
     X : ndarray (n, p)
         Genotype matrix, one column per SNP.
     y : ndarray (n,)
-        Outcome/phenotype vector.
+        Outcome/phenotype vector. May contain NaNs.
     covariates : ndarray (n, q) or None
         Optional covariates to adjust for (e.g. PCs, age, sex).
         An intercept is added automatically; don't include one yourself.
@@ -27,8 +29,16 @@ def gwas_linear(X, y, covariates=None):
     se : ndarray (p,)
         Standard error for each SNP's effect.
     """
-    n, p = X.shape
     y = np.asarray(y).reshape(-1)
+
+    # drop samples with missing phenotype
+    valid = ~np.isnan(y)
+    y = y[valid]
+    X = X[valid]
+    if covariates is not None:
+        covariates = np.asarray(covariates)[valid]
+
+    n, p = X.shape
 
     # design matrix for covariates (+ intercept), residualize y and X against it
     if covariates is not None:
@@ -37,10 +47,8 @@ def gwas_linear(X, y, covariates=None):
         C = np.ones((n, 1))
 
     # project out covariates from y
-    # (C'C)^{-1} C' y  -> fitted values -> residuals
     beta_c_y, *_ = np.linalg.lstsq(C, y, rcond=None)
     y_resid = y - C @ beta_c_y
-
     # project out covariates from each SNP column at once
     beta_c_X, *_ = np.linalg.lstsq(C, X, rcond=None)
     X_resid = X - C @ beta_c_X
@@ -52,16 +60,12 @@ def gwas_linear(X, y, covariates=None):
     # marginal regression of residualized y on each residualized SNP column
     Sxx = np.sum(X_resid ** 2, axis=0)          # (p,)
     Sxy = X_resid.T @ y_resid                    # (p,)
-
     betas = Sxy / Sxx                            # (p,)
-
     fitted = X_resid * betas                     # (n, p), broadcasting
     resid = y_resid[:, None] - fitted            # (n, p)
     rss = np.sum(resid ** 2, axis=0)             # (p,)
-
     sigma2 = rss / dof                           # residual variance per SNP
     se = np.sqrt(sigma2 / Sxx)                   # (p,)
-
     z_scores = betas / se
 
     return z_scores, betas, se
