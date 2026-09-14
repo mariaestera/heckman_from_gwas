@@ -110,7 +110,23 @@ def beta_heckman(d, R, pi0, snr, rng = None):
 
     return beta, 1-h2
 
-def heckman_outcome(X, beta_s, beta_y, sigma2_s, sigma2_y, p_sel, rho, rng = None):
+
+def beta_s(d, R, pi0, snr, rng=None):
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    beta_raw = spike_and_slab(d, pi0, rng=rng)
+
+    v = beta_raw.T @ R @ beta_raw
+
+    # noise variance fixed at 1, so signal variance = snr * noise variance = snr
+    beta = np.sqrt(snr / v) * beta_raw
+
+    return beta
+
+
+def heckman_outcome(X, beta_s, beta_y, sigma2_y, p_sel, rho, snr_s, rng = None):
     
     if rng is None:
         rng = np.random.default_rng()
@@ -118,13 +134,22 @@ def heckman_outcome(X, beta_s, beta_y, sigma2_s, sigma2_y, p_sel, rho, rng = Non
     n = X.shape[0]
 
     # correlated noise (u, e)
-    cov = np.array([[sigma2_s, rho * np.sqrt(sigma2_s * sigma2_y)],
-                     [rho * np.sqrt(sigma2_s * sigma2_y), sigma2_y]])
+    cov = np.array([[1, rho * np.sqrt(sigma2_y)],
+                     [rho * np.sqrt(sigma2_y), sigma2_y]])
     u, e = rng.multivariate_normal([0, 0], cov, size=n).T
 
     # selection equation
-    s_star = X @ beta_s + u + norm.ppf(p_sel)
-    
+
+    sigma2_eta = snr_s
+    mu_eta = np.sqrt(1.0 + sigma2_eta) * norm.ppf(p_sel)
+    s_star = X @ beta_s + u + mu_eta
+
+    #s_star = X @ beta_s + u + norm.ppf(p_sel)
+
+    #sigma2_eta = beta_s.T @ R @ beta_s
+    #mu_eta = np.sqrt(1.0 + sigma2_eta) * norm.ppf(p_sel)
+    #s_star = X @ beta_s + u + mu_eta
+
     s = (s_star > 0).astype(int)
 
     # outcome equation, observed only where selected
