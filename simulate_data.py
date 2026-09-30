@@ -112,48 +112,100 @@ def beta_heckman(d, R, pi0, snr, rng = None):
 
 
 def beta_s(d, R, pi0, snr, rng=None):
-
+    """Draw effect sizes so that the signal variance is h2 = snr / (1 + snr).
+    Assumes var(signal) + var(noise) = 1, hence var(noise) = 1 - h2.
+    """
     if rng is None:
         rng = np.random.default_rng()
 
     beta_raw = spike_and_slab(d, pi0, rng=rng)
 
+    # Signal variance implied by beta_raw under LD matrix R
     v = beta_raw.T @ R @ beta_raw
 
-    # noise variance fixed at 1, so signal variance = snr * noise variance = snr
-    beta = np.sqrt(snr / v) * beta_raw
+    # Total variance is fixed at 1, so signal variance = h2 = snr / (1 + snr)
+    h2 = snr / (1.0 + snr)
+
+    # Rescale so that beta' R beta = h2
+    beta = np.sqrt(h2 / v) * beta_raw
 
     return beta
 
 
-def heckman_outcome(X, beta_s, beta_y, sigma2_y, p_sel, rho, snr_s, rng = None):
-    
+def gamma_s(d, Sigma_W, h2, intercept=False, rng=None):
+    """Draw effect sizes for a given heritability h2.
+
+    Assumes var(noise) = 1, hence var(signal) = h2 / (1 - h2)
+    and the total variance is 1 / (1 - h2).
+
+    If intercept is True, a zero is prepended to the returned vector as a
+    placeholder for the intercept, so the output has length d + 1.
+    """
+
     if rng is None:
         rng = np.random.default_rng()
 
-    n = X.shape[0]
+    # Draw unscaled effects from a standard normal
+    gamma_raw = rng.normal(0, 1, d)
 
-    # correlated noise (u, e)
-    cov = np.array([[1, rho * np.sqrt(sigma2_y)],
-                     [rho * np.sqrt(sigma2_y), sigma2_y]])
-    u, e = rng.multivariate_normal([0, 0], cov, size=n).T
+    # Signal variance implied by gamma_raw under covariance matrix Sigma_W
+    v = gamma_raw.T @ Sigma_W @ gamma_raw
 
-    # selection equation
+    # Target signal variance for var(noise) = 1: h2 / (1 - h2)
+    signal_var = h2 / (1.0 - h2)
 
-    sigma2_eta = snr_s
-    mu_eta = np.sqrt(1.0 + sigma2_eta) * norm.ppf(p_sel)
-    s_star = X @ beta_s + u + mu_eta
+    # Rescale so that gamma' Sigma_W gamma = signal_var
+    gamma = np.sqrt(signal_var / v) * gamma_raw
 
-    #s_star = X @ beta_s + u + norm.ppf(p_sel)
+    if intercept:
+        # Prepend a zero as a placeholder for the intercept term
+        gamma = np.concatenate(([0.0], gamma))
 
-    #sigma2_eta = beta_s.T @ R @ beta_s
-    #mu_eta = np.sqrt(1.0 + sigma2_eta) * norm.ppf(p_sel)
-    #s_star = X @ beta_s + u + mu_eta
+    return gamma
 
+def heckman_outcome(G, W, alpha, beta, gamma_s, gamma_y, sigma2_y, p_sel, rho, h2_s, rng=None):
+    """Simulate a type-II Tobit (Heckman) model at the individual level.
+
+    Model:
+        s* = G @ alpha + W @ gamma_s + eps_s
+        y* = G @ beta  + W @ gamma_y + eps_y
+
+    Assumptions:
+        - Var(G @ alpha) = h2_s (alpha must be pre-scaled accordingly)
+        - Var(eps_s) = 1 - h2_s, so Var(s* | W) = 1 (probit identifiability)
+        - Var(eps_y) = sigma2_y, corr(eps_s, eps_y) = rho
+        - The first column of W is an intercept (column of ones); the intercept
+          gamma_s[0] is set here so that P(s = 1) = p_sel
+        - G and the non-intercept columns of W are centered
+    """
+    if not 0 <= h2_s < 1:
+        raise ValueError("h2_s must be in [0, 1)")
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    n = G.shape[0]
+    sigma_y = np.sqrt(sigma2_y)
+
+    # Noise covariance: Var(eps_s) = 1 - h2_s, Var(eps_y) = sigma2_y
+    var_eps_s = 1.0 - h2_s
+    cov_sy = rho * sigma_y * np.sqrt(var_eps_s)
+    cov = np.array([[var_eps_s, cov_sy],
+                    [cov_sy, sigma2_y]])
+    eps_s, eps_y = rng.multivariate_normal([0.0, 0.0], cov, size=n).T
+
+    # Selection intercept: gamma_s0 = sqrt(1 + Var(W @ gamma_s)) * Phi^{-1}(p_sel)
+    # The variance is computed from the non-intercept covariates only
+    gamma_s = np.array(gamma_s, dtype=float, copy=True)
+    var_w = np.var(W[:, 1:] @ gamma_s[1:])
+    gamma_s[0] = np.sqrt(1.0 + var_w) * norm.ppf(p_sel)
+
+    # Selection equation
+    s_star = G @ alpha + W @ gamma_s + eps_s
     s = (s_star > 0).astype(int)
 
-    # outcome equation, observed only where selected
-    y_star = X @ beta_y + e
+    # Outcome equation, observed only where selected
+    y_star = G @ beta + W @ gamma_y + eps_y
     y = np.where(s == 1, y_star, np.nan)
 
     return s, y, s_star, y_star

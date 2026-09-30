@@ -1,6 +1,7 @@
 import numpy as np
 import statsmodels.api as sm
-
+from scipy.optimize import minimize
+from scipy.stats import norm
 
 def gwas_linear(X, y, covariates=None):
     """
@@ -42,7 +43,7 @@ def gwas_linear(X, y, covariates=None):
 
     # design matrix for covariates (+ intercept), residualize y and X against it
     if covariates is not None:
-        C = np.column_stack([np.ones(n), covariates])
+        C = covariates
     else:
         C = np.ones((n, 1))
 
@@ -104,7 +105,7 @@ def gwas_probit(X, y, covariates=None, verbose=False):
     y = np.asarray(y).reshape(-1)
 
     if covariates is not None:
-        base = np.column_stack([np.ones(n), covariates])
+        base = covariates
     else:
         base = np.ones((n, 1))
 
@@ -127,3 +128,4 @@ def gwas_probit(X, y, covariates=None, verbose=False):
             continue
 
     return z_scores, betas, se
+
