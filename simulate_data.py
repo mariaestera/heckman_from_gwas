@@ -163,6 +163,22 @@ def gamma_s(d, Sigma_W, h2, intercept=False, rng=None):
 
     return gamma
 
+
+def gamma_y(d, Sigma_W, h2, intercept=False, rng=None):
+
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    gamma_raw = rng.normal(0, 1, d)
+    v = gamma_raw.T @ Sigma_W @ gamma_raw
+    gamma = np.sqrt(h2 / v) * gamma_raw
+
+    if intercept:
+        gamma = np.concatenate(([0.0], gamma))
+
+    return gamma
+
 def heckman_outcome(G, W, alpha, beta, gamma_s, gamma_y, sigma2_y, p_sel, rho, h2_s, rng=None):
     """Simulate a type-II Tobit (Heckman) model at the individual level.
 
